@@ -1,0 +1,522 @@
+"""
+OFFLINE - no API calls. Turns raw Ontraport values into readable ones and attaches notes.
+
+  Family Status   2144              ->  Lost
+  Preferred Comm. */*406*/*407*/*   ->  Phone, Email
+  Contact Tags    */*33*/*116*/*    ->  Tag A, Tag B
+  Owner           1                 ->  Staff full name
+  Date Added      1621231893        ->  2021-05-17 02:11
+  Deceased (2)    1                 ->  Yes
+  + Note Count, All Notes, Note Author, Note Created Date, Note Date Modified, Note Type
+    (inserted right after "Last Note", where the Ontraport UI shows them)
+
+Merged cells (several notes, several tags, multi-select answers) put one value per line
+with a divider line between them; note columns are numbered #1, #2 ... newest first so
+the same number lines up across All Notes / Note Author / Note Created Date / etc.
+"""
+import csv
+import os
+import re
+import urllib.parse
+from collections import defaultdict
+from datetime import datetime, timezone
+
+EMPTY = ("", "0", None, "null")
+MULTI_RE = re.compile(r"\*/\*")
+NOTE_COLUMNS = ["Note Count", "All Notes", "Note Author", "Note Created Date", "Note Date Modified", "Note Type"]
+# Value cleanup (readable/required files only - raw backup is never changed). Every change is logged.
+PLACEHOLDER_RE = re.compile(r"\[[A-Za-z0-9_ ]+\]")          # unfilled form merge tags: [add2] [lastname2] [zip]
+WEB_ENCODED_RE = re.compile(r"%[0-9A-Fa-f]{2}")            # %0A (line break), %E2%80%99 (apostrophe) ...
+URL_DECODE_TYPES = ("text", "mergefield", "email", "phone", "sms", "state", "country")
+
+
+def cleaning_enabled():
+    return os.environ.get("ONTRAPORT_CLEAN_VALUES", "1").strip() not in ("0", "false", "no", "off")
+
+
+# UI shows tracking parents as "<alias> Name" (names, not ids)
+TRACKING_OBJECTS = {"75": "tracking_campaign", "76": "tracking_lead_source", "77": "tracking_medium",
+                    "78": "tracking_content", "79": "tracking_term"}
+# UI shows every date-time field twice: formatted, and again as "<alias> (Unix)"
+UNIX_TWIN_TYPES = ("timestamp",)
+# How the UI columns we cannot rebuild are explained in the column check
+UI_ONLY_REASONS = [
+    (re.compile(r"^PURL\s*:"), "Personal link Ontraport generates per contact to its own pages - not a stored "
+                                "field (not in Ontraport's field metadata, so the API cannot return it) and the links stop working once Ontraport is retired."),
+]
+DEFAULT_NOTE_TYPES = {"1": "Manual", "2": "Form", "3": "Incoming", "4": "Outgoing", "5": "API"}
+
+
+def get_tz():
+    name = os.environ.get("ONTRAPORT_TIMEZONE", "America/New_York")
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name), name
+    except Exception:
+        print(f"WARNING: timezone '{name}' not available on this computer - dates will be in UTC.\n"
+              f"         Fix: pip install tzdata   then:   python make_readable.py   (offline, no API calls)")
+        return timezone.utc, "UTC"
+
+
+def split_multi(value):
+    """Ontraport stores multi-select as */*1*/*2*/*; some imported records use "1; 2" instead."""
+    text = str(value or "")
+    out = []
+    for part in MULTI_RE.split(text):           # */*1*/*2*/*  (also handles "*/*152; 151*/*")
+        out += [x.strip() for x in part.split(";") if x.strip()]
+    return out
+
+
+def build_option_index(*fields_metas):
+    """option id -> {(field alias, label)} across all downloaded objects. Used to recognise
+    values that are valid options of a DIFFERENT field (e.g. a school name in Grade Level)."""
+    idx = defaultdict(set)
+    for meta in fields_metas:
+        for f in (meta or {}).values():
+            opts = f.get("options")
+            if isinstance(opts, dict) and f.get("type") in ("drop", "list"):
+                for oid, label in opts.items():
+                    idx[str(oid)].add((f.get("alias"), label))
+    return idx
+
+
+def fmt_ts(value, tz, fmt):
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return value
+    if n <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(n, tz).strftime(fmt)
+    except (OverflowError, OSError, ValueError):
+        return f"{value} (invalid date)"
+
+
+class LinkedObject:
+    """Another object's downloaded records, used to show names instead of ids
+    (e.g. a pipeline's Primary Contact) and to fill the columns Ontraport copies from it."""
+
+    def __init__(self, label, records, fields_meta, lookups, tz):
+        self.label = label.rstrip("s")
+        self.records = {str(r.get("id")): r for r in records}
+        self.decoder = Decoder(fields_meta, lookups, tz)
+
+        meta = fields_meta or {}
+        by_alias = {f.get("alias"): k for k, f in meta.items()}
+        self.first_key = "firstname" if "firstname" in meta else by_alias.get("First Name")
+        self.last_key = "lastname" if "lastname" in meta else by_alias.get("Last Name")
+        self.stage_key = by_alias.get("Pipeline Stage")
+        self.email_key = "email" if "email" in meta else by_alias.get("Email")
+
+    def display_name(self, rec):
+        name = (rec.get("fn") or "").strip() or " ".join(
+            str(x).strip() for x in (rec.get(self.first_key), rec.get(self.last_key)) if x and str(x).strip())
+        if name:
+            return name
+        if self.stage_key and not (self.first_key or self.last_key):  # pipelines have no name fields at all
+            stage = self.decoder.decode(self.stage_key, rec.get(self.stage_key))
+            return f"{self.label.capitalize()} {rec.get('id')}" + (f" - {stage}" if stage else "")
+        email = str(rec.get(self.email_key) or "").strip() if self.email_key else ""
+        return f"{self.label} {rec.get('id')} (no name" + (f", {email})" if email else ")")
+
+
+class Decoder:
+    def __init__(self, fields_meta, lookups, tz):
+        self.meta, self.tz = fields_meta, tz
+        self.staff = (lookups or {}).get("staff", {})
+        self.tags = (lookups or {}).get("tags", {})
+        self.tracking = {oid: (lookups or {}).get(name, {}) for oid, name in TRACKING_OBJECTS.items()}
+        self.campaigns = (lookups or {}).get("campaigns", {})
+        self.unknown = defaultdict(set)  # field -> option ids not defined in Ontraport
+        self.option_index = {}           # option id -> {(other field alias, label)}
+        self.misplaced = defaultdict(lambda: defaultdict(int))  # field -> other field -> count
+        self._pending = None
+        self.linked = {}                 # parent object id -> LinkedObject (e.g. "0" -> contacts)
+        self.fixes, self._fixed = [], set()  # cleanup audit log
+        # First/Last name pairs: "First Name"/"Last Name", "First Name (2)"/"Last Name (2)", ...
+        by_alias = {f.get("alias"): k for k, f in self.meta.items()}
+        self.pair_of = {}
+        for alias, fk in by_alias.items():
+            if alias and alias.startswith("First Name"):
+                lk = by_alias.get("Last Name" + alias[len("First Name"):])
+                if lk:
+                    self.pair_of[fk] = self.pair_of[lk] = (fk, lk)
+        self.unresolved = defaultdict(int)  # field -> count of linked ids not found
+
+    def record_link(self, key, record):
+        """For a related_data field like 'f1966//firstname': the linked record + sub-field."""
+        f = self.meta.get(key, {})
+        path = str(f.get("extra_data") or "").split("//")
+        if len(path) != 2:
+            return None, None, None
+        link_field, sub = path
+        parent_obj = str(self.meta.get(link_field, {}).get("parent_object", ""))
+        linked = self.linked.get(parent_obj)
+        if linked is None:
+            return None, None, None
+        pid = str(record.get(link_field) or "")
+        return linked, pid, sub
+
+    def _foreign_or_raw(self, key, opt_id):
+        """An option id this field doesn't have. If it is an option of exactly one OTHER field,
+        show that label and say where it belongs (nothing is moved). Otherwise keep the raw id."""
+        own = self.meta.get(key, {}).get("alias")
+        hits = {h for h in self.option_index.get(opt_id, ()) if h[0] != own}
+        if len(hits) == 1:
+            alias, label = next(iter(hits))
+            self.misplaced[key][alias] += 1
+            self._pending = alias
+            return f"{label} (value belongs to '{alias}')"
+        self.unknown[key].add(opt_id)
+        return opt_id
+
+    # ---- cleanup -------------------------------------------------------------------------
+    def _clean(self, key, v):
+        if not isinstance(v, str) or not v or not cleaning_enabled():
+            return v
+        if PLACEHOLDER_RE.fullmatch(v.strip()):
+            return ""
+        t = self.meta.get(key, {}).get("type")
+        if t not in URL_DECODE_TYPES or v.strip().lower().startswith(("http", "www.")):
+            return v  # links, notes and long text are left exactly as stored
+        if PLACEHOLDER_RE.search(v):  # "[zip]22046" -> "22046" (placeholder stuck to the real value)
+            v = PLACEHOLDER_RE.sub("", v).strip()
+        if WEB_ENCODED_RE.search(v) and not re.search(r"\s", v):  # encoded values never contain spaces
+            v = urllib.parse.unquote(v)
+        return v
+
+    def _log(self, record, key, before, after, rule):
+        before = "" if before is None else str(before)
+        if before == str(after) or (str(record.get("id")), key) in self._fixed:
+            return
+        self._fixed.add((str(record.get("id")), key))
+        self.fixes.append({"Record ID": record.get("id"), "Column": self.meta.get(key, {}).get("alias", key),
+                           "Original value": before, "Cleaned value": after, "Rule": rule})
+
+    @staticmethod
+    def _rule(before):
+        b = str(before or "").strip()
+        if PLACEHOLDER_RE.fullmatch(b):
+            return "unfilled form placeholder removed"
+        if PLACEHOLDER_RE.search(b):
+            return "form placeholder stuck to the value removed"
+        return "web-encoded text decoded (%0A = line break, %E2%80%99 = apostrophe ...)"
+
+    def decode_record(self, key, record):
+        """Decode one field of one record: ids -> names, links resolved, junk values cleaned."""
+        if cleaning_enabled() and key in self.pair_of:
+            fk, lk = self.pair_of[key]
+            first = self._clean(fk, self._decode_record(fk, record)) or ""
+            last = self._clean(lk, self._decode_record(lk, record)) or ""
+            split = "\n" in first and not last.strip()
+            if split:  # "Lorraine\nCampos" typed into First Name, Last Name empty
+                first, last = first.split("\n", 1)
+            val = " ".join(str(first if key == fk else last).split())
+            rule = "full name was in First Name - split into First / Last" if split else self._rule(record.get(key))
+            self._log(record, key, record.get(key), val, rule)
+            return val
+        self._pending = None
+        v = self._decode_record(key, record)
+        if self._pending:
+            self._log(record, key, record.get(key), v,
+                      f"value is an option of another field ('{self._pending}') - shown with that label, NOT moved")
+            self._pending = None
+        cleaned = self._clean(key, v)
+        if cleaned != v:
+            self._log(record, key, record.get(key), cleaned, self._rule(record.get(key)))
+        return cleaned
+
+    def _decode_record(self, key, record):
+        f = self.meta.get(key)
+        value = record.get(key)
+        if key == "fn" and f and f.get("type") == "mergefield" and not str(value or "").strip():
+            first = self.decode_record("firstname", record) if "firstname" in self.meta else record.get("firstname")
+            last = self.decode_record("lastname", record) if "lastname" in self.meta else record.get("lastname")
+            return " ".join(str(x).strip() for x in (first, last) if x and str(x).strip())
+        if f and f.get("type") == "related_data":
+            linked, pid, sub = self.record_link(key, record)
+            if linked is not None:  # take the live value from the linked record, decoded there
+                if pid in EMPTY:
+                    return ""
+                rec = linked.records.get(pid)
+                if rec is None:
+                    self.unresolved[key] += 1
+                    return ""
+                return linked.decoder.decode_record(sub, rec)
+        if f and f.get("type") == "parent" and str(f.get("parent_object")) in self.linked:
+            if str(value) in EMPTY:
+                return ""
+            linked = self.linked[str(f.get("parent_object"))]
+            rec = linked.records.get(str(value))
+            if rec is None:
+                self.unresolved[key] += 1
+                return f"{linked.label} {value} (not found)"
+            return linked.display_name(rec)
+        return self.decode(key, value)
+
+    def decode(self, key, value):
+        f = self.meta.get(key)
+        if value is None:
+            return ""
+        if f is None:
+            return value
+        t, opts = f.get("type"), f.get("options") or {}
+        if t == "drop":
+            if str(value) in EMPTY:
+                return ""
+            if str(value) in opts:
+                return opts[str(value)]
+            parts = split_multi(value)
+            if len(parts) > 1 and all(p in opts for p in parts):  # several answers in a single-choice field
+                return join_values(opts[p] for p in parts)
+            return self._foreign_or_raw(key, str(value))
+        if t == "list":
+            out = []
+            for x in split_multi(value):
+                out.append(opts[x] if x in opts else self._foreign_or_raw(key, x))
+            return join_values(out)
+        if t == "subscription" and key == "updateCampaign":
+            return join_values(self.campaigns.get(x, f"automation {x}") for x in split_multi(value))
+        if t == "subscription" and key == "contact_cat":
+            return join_values(self.tags.get(x, f"tag {x}") for x in split_multi(value))
+        if t == "check":
+            return {"1": "Yes", "0": "No"}.get(str(value), value)
+        if t == "timestamp":
+            return fmt_ts(value, self.tz, "%Y-%m-%d %H:%M")
+        if t == "fulldate":
+            return fmt_ts(value, self.tz, "%Y-%m-%d")
+        if t == "parent" and str(f.get("parent_object")) in self.tracking:
+            table = self.tracking[str(f.get("parent_object"))]
+            return "" if str(value) in EMPTY else table.get(str(value), f"id {value}")
+        if t == "parent" and str(f.get("parent_object")) == "2":
+            return "" if str(value) in EMPTY else self.staff.get(str(value), f"staff {value}")
+        return value
+
+
+def index_notes(notes, notes_fields, object_id, staff, tz):
+    """record id -> notes (newest first) for notes that belong to object_id."""
+    types = ((notes_fields or {}).get("type") or {}).get("options") or DEFAULT_NOTE_TYPES
+    want = str(object_id)
+    idx = defaultdict(list)
+    for n in notes or []:
+        otype = str(n.get("object_type_id") or "0")
+        rid = str(n.get("contact_id") or "")
+        if otype != want or rid in EMPTY:
+            continue
+        author = str(n.get("author") or "")
+        idx[rid].append({
+            "time": int(float(n.get("time") or 0)),
+            "dlm": int(float(n.get("dlm") or 0)),
+            "author": "" if author in EMPTY else staff.get(author, f"staff {author}"),
+            "type": types.get(str(n.get("type")), str(n.get("type") or "")),
+            "text": (n.get("data") or "").strip(),
+        })
+    for v in idx.values():
+        v.sort(key=lambda x: x["time"], reverse=True)
+    return idx
+
+
+def divider():
+    """Line placed between merged values in one cell. Change it in .env (ONTRAPORT_DIVIDER)."""
+    line = os.environ.get("ONTRAPORT_DIVIDER", "--------------------")
+    return f"\n{line}\n"
+
+
+def join_values(values):
+    """Several values in one cell: one per line, with the divider between them."""
+    values = [str(v) for v in values if str(v).strip()]
+    return divider().join(values)
+
+
+EXCEL_CELL_LIMIT = 32000  # Excel cannot show more than 32,767 characters in one cell
+
+
+def fit_cell(text, label, stats):
+    if len(text) <= EXCEL_CELL_LIMIT:
+        return text
+    stats["truncated"] += 1
+    return text[:EXCEL_CELL_LIMIT] + f"\n... [cut here for Excel - full text in notes/{label}_notes.csv]"
+
+
+def note_cells(ns, tz, label="records", stats=None):
+    """Every note column lists ALL notes, newest first, numbered and in the same order,
+    so #2 in 'Note Author' belongs to #2 in 'All Notes'."""
+    stats = stats if stats is not None else {"truncated": 0}
+    if not ns:
+        return [0, "", "", "", "", ""]
+    t = lambda n: fmt_ts(n, tz, "%Y-%m-%d %H:%M")
+    numbered = lambda vals: join_values(f"#{i} {v if str(v).strip() else '(blank)'}" for i, v in enumerate(vals, 1))
+    return [
+        len(ns),
+        fit_cell(numbered(n["text"] for n in ns), label, stats),
+        numbered(n["author"] or "unknown" for n in ns),
+        numbered(t(n["time"]) for n in ns),
+        numbered(t(n["dlm"]) for n in ns),
+        numbered(n["type"] for n in ns),
+    ]
+
+
+def build_readable(object_id, records, fields_meta, notes, notes_fields, lookups, tz, out_csv, linked=None,
+                   relations=None, option_index=None):
+    """linked: {"0": LinkedObject(contacts...)} - resolves Primary Contact names and the
+    columns Ontraport copies from the contact (related_data)."""
+    dec = Decoder(fields_meta, lookups, tz)
+    dec.linked = linked or {}
+    dec.option_index = option_index or build_option_index(fields_meta)
+    for lo in dec.linked.values():
+        lo.decoder.option_index = dec.option_index
+    label = os.path.basename(out_csv).replace("_readable.csv", "")
+    stats = {"truncated": 0}
+    keys = ["id"] + [k for k in fields_meta if k != "id"]
+    keys += sorted({k for r in records for k in r} - set(keys))
+    def col_name(k):
+        f = fields_meta.get(k, {})
+        alias = f.get("alias", k)
+        if f.get("type") == "parent" and str(f.get("parent_object")) in TRACKING_OBJECTS:
+            return f"{alias} Name"
+        return alias
+
+    # columns: (header, function(record) -> value)
+    cols = []
+    for k in keys:
+        cols.append((col_name(k), (lambda k: lambda r: dec.decode_record(k, r))(k)))
+        if fields_meta.get(k, {}).get("type") in UNIX_TWIN_TYPES:
+            cols.append((f"{fields_meta[k].get('alias', k)} (Unix)",
+                         (lambda k: lambda r: "" if str(r.get(k)) in EMPTY else r.get(k))(k)))
+    header = [c[0] for c in cols]
+
+    add_notes = notes is not None
+    insert_at = len(header)
+    if add_notes:
+        last_note_alias = fields_meta.get("last_note", {}).get("alias")
+        if last_note_alias in header:  # same place the Ontraport UI shows them
+            insert_at = header.index(last_note_alias) + 1
+        header = header[:insert_at] + NOTE_COLUMNS + header[insert_at:]
+        idx = index_notes(notes, notes_fields, object_id, (lookups or {}).get("staff", {}), tz)
+
+    # relations: [(name, {record_id: [(other_id, display), ...]})] -> 3 columns each
+    relations = relations or []
+    for name, _ in relations:
+        header += [f"Linked {name}", f"Linked {name} Count", f"Linked {name} IDs"]
+
+    with_notes = 0
+    rel_stats = {name: 0 for name, _ in relations}
+    with open(out_csv, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh)
+        w.writerow(header)
+        for r in records:
+            row = [fn(r) for _, fn in cols]
+            if add_notes:
+                ns = idx.get(str(r.get("id")), [])
+                with_notes += bool(ns)
+                row = row[:insert_at] + note_cells(ns, tz, label, stats) + row[insert_at:]
+            for name, mapping in relations:
+                items = mapping.get(str(r.get("id")), [])
+                rel_stats[name] += bool(items)
+                row += [join_values(d for _, d in items), len(items), join_values(i for i, _ in items)]
+            w.writerow(row)
+
+    warnings = []
+    log_path = os.path.join(os.path.dirname(out_csv), f"{label}_cleanup_log.csv")
+    if dec.fixes:
+        with open(log_path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(dec.fixes[0]))
+            w.writeheader()
+            w.writerows(dec.fixes)
+        by_rule = defaultdict(int)
+        for fx in dec.fixes:
+            by_rule[fx["Rule"].split(" (")[0]] += 1
+        warnings.append(f"{len(dec.fixes)} values cleaned ({'; '.join(f'{n} {r}' for r, n in by_rule.items())}) "
+                        f"- every change listed in {os.path.basename(log_path)}; raw files unchanged")
+    elif os.path.exists(log_path):
+        os.remove(log_path)
+    if dec.misplaced:
+        warnings.append("values stored in the WRONG field (old import shifted columns) - shown with their real label "
+                        "and marked \"(value belongs to '...')\", not moved: " + "; ".join(
+                            f"{fields_meta.get(k, {}).get('alias', k)} holds {n} '{other}' value(s)"
+                            for k, others in dec.misplaced.items() for other, n in others.items()))
+    if dec.unknown:
+        warnings.append("dropdown values pointing to options deleted in Ontraport (kept as raw id): " +
+                        "; ".join(f"{fields_meta[k]['alias']}: {sorted(v)}" for k, v in dec.unknown.items()))
+    if dec.unresolved:
+        warnings.append("linked record not found in the download (left blank / marked 'not found'): " +
+                        "; ".join(f"{fields_meta.get(k, {}).get('alias', k)}: {n}" for k, n in dec.unresolved.items()))
+    rel = [k for k, f in fields_meta.items() if f.get("type") == "related_data"]
+    if rel and not dec.linked:
+        warnings.append(f"{len(rel)} columns copied from a linked record (e.g. Primary Contact details) are shown "
+                        f"as Ontraport returned them - run get_contacts.py first to fill them by name")
+    if stats["truncated"]:
+        warnings.append(f"{stats['truncated']} record(s) have more note text than one Excel cell holds - "
+                        f"cut in the readable file, complete in notes/{label}_notes.csv")
+    if not lookups:
+        warnings.append("staff/tag names not resolved (lookups missing)")
+    if not add_notes:
+        warnings.append("note columns not added (notes not exported)")
+    return {"records": len(records), "columns": len(header), "with_notes": with_notes, "warnings": warnings,
+            "header": header, "linked_counts": rel_stats, "cleaned_values": len(dec.fixes)}
+
+
+def column_check(header, ui_columns, out_csv):
+    """Compare our readable columns with the column list copied from the Ontraport UI.
+    Writes one row per column so anyone can see exactly what is where."""
+    ours, ui = list(header), [c.strip() for c in ui_columns if c.strip()]
+    rows = []
+    for c in ui:
+        if c in ours:
+            rows.append([c, "yes", "yes", "in export"])
+        else:
+            reason = next((why for rx, why in UI_ONLY_REASONS if rx.search(c)),
+                          "NOT FOUND - check this column")
+            rows.append([c, "yes", "no", reason])
+    extra_reason = {"Note Count": "added by export (number of notes)"}
+    for c in ours:
+        if c not in ui:
+            rows.append([c, "no", "yes", extra_reason.get(c, "stored field Ontraport hides from this column list")])
+    with open(out_csv, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh)
+        w.writerow(["Column", "In Ontraport UI", "In export", "Explanation"])
+        w.writerows(rows)
+    missing = [r[0] for r in rows if r[2] == "no"]
+    unexplained = [r[0] for r in rows if r[3].startswith("NOT FOUND")]
+    return {"ui_columns": len(ui), "export_columns": len(ours), "ui_only": len(missing),
+            "export_only": sum(1 for r in rows if r[1] == "no"), "unexplained": unexplained}
+
+
+def read_column_list(path):
+    """One column name per line; surrounding quotes and blank lines are ignored.
+    Accepts UTF-8 and files saved from Excel on Windows (cp1252, where ’ is byte 0x92)."""
+    data = open(path, "rb").read()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("cp1252", errors="replace")
+    return [l.strip().strip('"').strip() for l in text.splitlines() if l.strip()]
+
+
+def select_columns(readable_csv, wanted, out_csv):
+    """Write a NEW csv with only the wanted columns, in the wanted order.
+    The readable file is read, never changed. Matching is exact first, then
+    ignoring case/extra spaces, so small typing differences in the list still match."""
+    csv.field_size_limit(2 ** 31 - 1)
+    norm = lambda s: " ".join(str(s).replace('"', "").replace("\u201c", "").replace("\u201d", "").split()).lower()
+    with open(readable_csv, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.reader(fh)
+        header = next(reader)
+        exact = {h: i for i, h in enumerate(header)}
+        loose = {norm(h): i for i, h in enumerate(header)}
+        picks, missing = [], []
+        for w in wanted:
+            i = exact.get(w, loose.get(norm(w)))
+            if i is None:
+                missing.append(w)
+            else:
+                picks.append((w, i))
+        rows = 0
+        with open(out_csv, "w", newline="", encoding="utf-8-sig") as out:
+            wr = csv.writer(out)
+            wr.writerow([w for w, _ in picks])
+            for row in reader:
+                wr.writerow([row[i] if i < len(row) else "" for _, i in picks])
+                rows += 1
+    return {"requested": len(wanted), "written": len(picks), "missing": missing, "records": rows}

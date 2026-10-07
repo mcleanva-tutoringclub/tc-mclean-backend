@@ -1,0 +1,233 @@
+Family Information & Emergency Release Form
+ABC Family Category
+Family Status
+Student Success Coach
+Academic Coach
+Au Pair / Nanny Name
+Au Pair / Nanny Email
+Au Pair / Nanny SMS
+Name
+Guardian Role
+Gender
+Title
+First Name
+Last Name
+Preferred Name / Phonetic
+Email
+Bulk Email Status
+Email 2
+SMS Number
+Bulk SMS Status
+Home Phone
+Address
+Address 2
+City
+State
+Zip Code
+Country
+Preferred Communication
+Deceased
+Company
+Occupation
+Fax
+Office Phone
+Office Phone Ext
+Birthday
+Wedding Anniversary
+Guardian Role (2)
+Gender (2)
+Title (2)
+First Name (2)
+Last Name (2)
+Preferred Name / Phonetic (2)
+Email (2)
+Bulk Email Status (2)
+Email 2 (2)
+SMS Number (2)
+Home Phone (2)
+Address Same As Primary Contact
+Address (2)
+Address 2 (2)
+City (2)
+State (2)
+Zip Code (2)
+Country (2)
+Preferred Communication (2)
+Deceased (2)
+Company (2)
+Occupation (2)
+Fax (2)
+Office Phone (2)
+Office Phone Ext (2)
+Birthday (2)
+Guardian Role (3)
+Gender (3)
+Title (3)
+First Name (3)
+Last Name (3)
+Preferred Name / Phonetic (3)
+Email (3)
+Bulk Email Status (3)
+Email 2 (3)
+SMS Number (3)
+Home Phone (3)
+Address (3)
+Address 2 (3)
+City (3)
+State (3)
+Zip Code (3)
+Country (3)
+Preferred Communication (3)
+Deceased (3)
+Company (3)
+Occupation (3)
+Fax (3)
+Office Phone (3)
+Birthday (3)
+Guardian Role (4)
+Gender (4)
+Title (4)
+First Name (4)
+Last Name (4)
+Preferred Name / Phonetic (4)
+Email (4)
+Bulk Email Status (4)
+Email 2 (4)
+SMS Number (4)
+Home Phone (4)
+Address (4)
+Address 2 (4)
+City (4)
+State (4)
+Zip Code (4)
+Country (4)
+Preferred Communication (4)
+Deceased (4)
+Company (4)
+Occupation (4)
+Fax (4)
+Office Phone (4)
+Birthday (4)
+Emergency Contact Name
+Emergency Contact Relationship
+Emergency Contact Phone
+Emergency Contact Email
+Emergency Contact Address
+In the event of an emergency where guardians cannot be contacted, Tutoring Club is authorized to secure whatever medical care is necessary for the safety and well-being of my student(s).
+Parent agrees to assume all costs incurred for emergency care.
+Date emergency release signed
+Full Name of Parent / Guardian Submitting Form
+Doctor
+Doctors Phone
+MCL Imported Notes
+Enter Your Note Here
+Image Consent
+Review Solicitation Okay
+Date of Review
+Medium of Review
+Last Card Type
+Last Card Number (Last 4)
+Last Card Expiration Month
+Last CC Status
+Last Card Expiration Year
+Last Card Expiration Date
+Last Invoice #
+Last Total Invoice Amount
+Last Charge Amount
+Total Amount of Unpaid Transactions
+Owner
+Score
+Sales Stage
+Priority
+Time Since Last Activity
+First Campaign Name
+First Lead Source Name
+First Medium Name
+First Content Name
+First Term Name
+Last Campaign Name
+Last Lead Source Name
+Last Medium Name
+Last Content Name
+Last Term Name
+Referring Page
+First Contact Date
+Inquiry Method
+How did you first hear about us?
+Other - How did you first hear about us?
+Marketing Source Details
+Referred by (Person / Family Name)
+Referral Acknowledged
+Source Reported on Family Info Form
+Imported Marketing Source
+Automations
+Contact Tags
+Newsletter opt-in
+MCL Lead Number
+TCM Entry Number
+Newsletter
+Newsletter (2)
+TCM Import Notes
+Temp - Bulk Mail Status
+Date Added
+Date Added (Unix)
+Spent
+Contact ID
+Unique ID
+Date Modified
+Date Modified (Unix)
+IP Address
+Timezone
+Last Activity
+Last Activity (Unix)
+User Agent
+Current Students Counter
+Profile Image
+Website
+Twitter
+Facebook
+Instagram
+Linkedin
+Your Initials
+Lead Stage
+Lead Status
+Pipeline Stage
+Pipeline Status
+Create New Pipeline
+Update Pipeline
+Form Field: Source Reported on Family Info Form
+Sys automation | notes
+SYS | Unformatted Prefill Link
+Student Full Name
+Student Notes (Optional) - Enter any additional information that you would like us to know.
+Last Note
+PURL : Policies | Center Operating Calendar
+PURL : Policies | Thank You
+PURL : Enrollment Consents & Acknowledgements
+PURL : Policies | Study Hall & Academic Mentorship Policies
+PURL : Policies | School Year & Summer Schedule
+PURL : Policies | Student Illnesses
+PURL : Policies | Scheduling & Makeup Sessions
+PURL : New Pipeline Entry For Parents
+PURL : Policies | The Tutoring Session
+PURL : Policies | Student Agreements
+PURL : Policies | Setting Students Up For Success
+PURL : New Pipeline Entry For Students
+PURL : Policies | Welcome
+PURL : Policies | Coronavirus / COVID-19 Waiver
+PURL : Policies | Inclement Weather
+PURL : Student Information & Tutoring Goals Form
+PURL : Policies | The TC Way
+PURL : Policies | Tuition, Fees, Pausing Enrollment
+PURL : Family Information & Emergency Release Form
+PURL : Jamestown ES AtoZ Directory Registration
+PURL : Chesterbrook ES AtoZ Directory Registration
+PURL : Haycock ES AtoZ Directory Registration
+PURL : Generic Registration Form Thank You
+PURL : Jamestown_Haycock ES A2Z Directory Registration | Thank You
+PURL : Parent and Student Pipeline Thank You Page
+All Notes
+Note Author
+Note Created Date
+Note Date Modified
+Note Type

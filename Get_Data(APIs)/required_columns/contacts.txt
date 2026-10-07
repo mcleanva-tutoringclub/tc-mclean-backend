@@ -1,0 +1,151 @@
+ABC Family Category
+Family Status
+Au Pair / Nanny Name
+Au Pair / Nanny Email
+Au Pair / Nanny SMS
+Name
+Guardian Role
+Gender
+Title
+First Name
+Last Name
+Preferred Name / Phonetic
+Email
+Bulk Email Status
+Email 2
+SMS Number
+Bulk SMS Status
+Home Phone
+Address
+Address 2
+City
+State
+Zip Code
+Country
+Preferred Communication
+Deceased
+Company
+Occupation
+Fax
+Office Phone
+Office Phone Ext
+Birthday
+Guardian Role (2)
+Gender (2)
+Title (2)
+First Name (2)
+Last Name (2)
+Preferred Name / Phonetic (2)
+Email (2)
+Bulk Email Status (2)
+Email 2 (2)
+SMS Number (2)
+Home Phone (2)
+Address Same As Primary Contact
+Address (2)
+Address 2 (2)
+City (2)
+State (2)
+Zip Code (2)
+Country (2)
+Preferred Communication (2)
+Deceased (2)
+Company (2)
+Occupation (2)
+Fax (2)
+Office Phone (2)
+Office Phone Ext (2)
+Birthday (2)
+Guardian Role (3)
+Gender (3)
+Title (3)
+First Name (3)
+Last Name (3)
+Preferred Name / Phonetic (3)
+Email (3)
+Bulk Email Status (3)
+Email 2 (3)
+SMS Number (3)
+Home Phone (3)
+Address (3)
+Address 2 (3)
+City (3)
+State (3)
+Zip Code (3)
+Country (3)
+Preferred Communication (3)
+Deceased (3)
+Company (3)
+Occupation (3)
+Fax (3)
+Office Phone (3)
+Birthday (3)
+Guardian Role (4)
+Gender (4)
+Title (4)
+First Name (4)
+Last Name (4)
+Preferred Name / Phonetic (4)
+Email (4)
+Bulk Email Status (4)
+Email 2 (4)
+SMS Number (4)
+Home Phone (4)
+Address (4)
+Address 2 (4)
+City (4)
+State (4)
+Zip Code (4)
+Country (4)
+Preferred Communication (4)
+Deceased (4)
+Company (4)
+Occupation (4)
+Fax (4)
+Office Phone (4)
+Birthday (4)
+Emergency Contact Name
+Emergency Contact Relationship
+Emergency Contact Phone
+Emergency Contact Email
+Emergency Contact Address
+"In the event of an emergency where guardians cannot be contacted, Tutoring Club is authorized to secure whatever medical care is necessary for the safety and well-being of my student(s)."
+Parent agrees to assume all costs incurred for emergency care.
+Date emergency release signed
+Full Name of Parent / Guardian Submitting Form
+Doctor
+Doctors Phone
+MCL Imported Notes
+Image Consent
+Review Solicitation Okay
+Date of Review
+Sales Stage
+Inquiry Method
+How did you first hear about us?
+Other - How did you first hear about us?
+Marketing Source Details
+Referred by (Person / Family Name)
+Source Reported on Family Info Form
+TCM Import Notes
+Date Added (Unix)
+Contact ID
+Unique ID
+Date Modified
+Date Modified (Unix)
+Last Activity
+Last Activity (Unix)
+Current Students Counter
+Your Initials
+Lead Stage
+Lead Status
+Pipeline Stage
+Pipeline Status
+Form Field: Source Reported on Family Info Form
+SYS | Unformatted Prefill Link
+Student Full Name
+Wedding Anniversary
+All Notes
+Note Author
+Note Created Date
+Note Date Modified
+Note Type
